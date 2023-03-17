@@ -1,0 +1,134 @@
+宏只占用编译时间，不占用调用时间；函数相反。
+
+
+I/O:
+	可用来写一些小功能，在命令行中"./**** arg1 arg2 ... "传参运行
+	
+	一定要注意越界问题，在将流中的内容读到一个指针地址后，指针无法知道要事先准备多少的内存，
+	有可能越界。
+	
+	sysio: 系统io，基于kernel。	
+	stdio: 标准io，对于不同的系统（如windows和linux）不同sysio，建立一个标准的io规则，底层是操作不同sysio，
+		但对于开发者相同。
+	
+	两者区别：sys与std不可混用！！！
+		
+		**sys每次操作都是用户态到内核态，而std则是缓冲到达条件才flush。***（read()/write()每次都将用户缓存同步到内核缓存中，fread()/fwrite()等是
+		在用户缓存满，或换行时才同步到内核缓存中。然后由内核来操作物理I/O,内核决定什么时候把内核缓存同步到磁盘.）***
+		
+		响应速度：sys快
+		吞吐量：std快
+		
+		
+		
+		
+	stdio:	FILE类贯穿始终（FILE是个结构体，里面有当前位置指针，开始位置指针，文件大小等，很多函数都是对其中的当前位置指针进行操作）
+		
+		fopen();	打开的文件在堆区，用malloc()和new产生的（否则在栈
+			区fopen调用结束则指针指向的内存就释放了），需要fclose()去释放。   (new 的底层是malloc写的，delete底层是free写的)
+		fclose();
+		
+		fgetc();	
+		fputc();
+		
+		fgets();	以'\0'或指定长度结尾。
+		fputs();	同上。
+		
+		
+		fread();	以二进制读写，对linux来说都是流文件，一次读写指定个数的项目，
+			一个项目长度是指定的。
+		fwrite();	同上。
+		
+		printf();	只能指向stdout。
+		scanf();	只能指向stdin。
+		fprintf();	可以重定向至指定流。
+		fscanf();	同上。
+		
+		fseek();	定位fp指针，如fseek(fp,(long)0,SEEK_SET);  (SEEK_SET,SEEK_CUR,SEEK_END)。
+		ftell();	得到指针距离文件首的距离。
+		rewind();	rewind(fp)相当于封装了fseek(fp,0,SEEK_SET);
+
+		fflush();	刷新缓冲区，printf("打印这句");如果后面还有程序在执行，则这句话会在缓冲区，
+			直至还有打印的东西占满缓冲区，或在结尾加'\n'才会打印。
+			fflush();所有缓冲区都刷新， fflush(stdout);只有标准输出流刷新。
+			
+			
+			行缓冲：换行时刷新，满了的时候刷新，强制刷新（fflush（）；）。（stdout是这样，因为要遵循阅读逻辑）
+			
+			全缓冲：满了的时候刷新，强制刷新。（除stdout之外，默认是这样）
+			
+			无缓冲：如stderr，需要立即输出内容。
+			
+			setevbuf(FILE *stream,char *buf,int mode,size_t size);可改变默认缓冲模式，一般不用。
+			
+		getline();	获取完整的一行，不管有多长，底层是不断malloc();和reallocate();  （有点不懂为什么要初始化，看手册）。
+		
+		
+		
+		临时文件:
+			1、不冲突   2、及时销毁
+			
+			tmpnam();	比较危险，因为并发情况下，线程A拿到了name，但还没创建临时文件，线程B也拿到了这个name,然后先创建的
+				会被后创建的覆盖（因为创建文件不会用r,r+）。
+				
+			FILE *tmpfile(void);	会创建一个匿名文件，没有名字，解决了第一个问题，但确实在磁盘上占位置了，且把这个位置的指针给你了。
+					当fclose();时，会自动销毁此临时文件，就不存在第1、2个问题。
+******************************************************************************************
+				（这个指针到底是指向内存还是硬盘？？）（是内存，只不过硬盘中的临时文件是可以和内存中的流刷新的）
+******************************************************************************************
+
+
+	stdio全部基于sysio实现
+	sysio:	文件描述符  fd 贯穿始终（在内核空间）
+		fd本身是一个整形数，意为fd数组（这个数组大小就是最多打开文件的数量,其中的0,1,2是stdi,stdo,stderr）的下标，要取哪个文件，
+		先找到在数组中的位置下标，得到类似FILE*的结构体指针，然后对结构体中的内容进行操作;
+		一个进程打开一个fd数组，互不干涉;
+		fclose或close时将fd数组对应位置置为空，相关的结构体free掉，但结构体内的位置指针指向的实际文件缓存位置不会受到影响；
+		但如果fd数组内的两个指针指向同一个相关结构体，close其中一个，这个相关结构体不会free，只有当fd数组中没有指向它的指针时才free，
+		因为相关结构体内有一个count的成员，记录指向它的指针个数；
+		
+		
+		int open(char* pathname,int flags);	flags是个位图， 指打开的模式，和fopen mode对应关系：
+								r->O_RDONLY;r+->O_RDWR;w->O_WRONLY|O_CREAT|O_TRUNC;
+								w+->O_RDWR|O_CREAT|O_TRUNC;a->O_RDONLY;a+->O_RDWR|O_CREAT;
+												
+		int close(int fd);
+		
+		ssize_t read(int fd,void *buf,size_t count);
+		ssize_t write(int fd,const void *buf,size_t count);
+		off_t lseek(int fd,off_t offset,int whence);
+	
+		
+		
+		文件共享:	删除一个文件的第十行。用两个进程或线程打开同一个文件，一个r一个r+，r从第十一行开始读，r+从第十行开始写，
+			这样就不用lseek()了。然后truncate()/ftruncate()截断文件。
+			
+		原子操作：	不可分割的操作，解决竞争和冲突 
+		
+		int dup(int oldfd):	将oldfd中的结构体指针做一个副本放在数组最小未使用的地方，并返回新的fd。
+		
+		int dup2(int oldfd,int newfd):	将newfd位置释放掉，然后把oldfd副本放在newfd，是原子操作。（注意要关掉oldfd要先判断新旧是否相等，
+						相等的话就不close）
+						
+		void sync(void):	同步buffer和cache（内核层面）到设备（比如磁盘和u盘）
+		int fsync(int fd):	同步某一个文件的buffur和cache
+		int fdatasync(int fd):	只刷文件的数据，而不刷亚数据（比如修改时间之类）
+		
+		fcntl(int fd,int cmd,.../*arg*/):	管家级别函数，其他函数比如dup，dup2都是调用这个fcntl(fd,F_DUPFD)
+		
+		ioctl():	设备相关内容的管家级别函数（驱动就是用这个）
+		
+		/dev/fd/目录：	虚目录，显示当前进程的文件描述符信息，谁打开它，看的就是谁的文件描述符。
+		
+		
+		
+		
+		
+
+
+		
+			
+			
+			
+			
+			
